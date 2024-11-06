@@ -17,9 +17,11 @@ fn main() {
     let instance_dnf = instance.expression.to_dnf();
     eprintln!("instance_dnf = {}", instance_dnf);
 
-    // let instance_dnf = instance_dnf.to_dnf();
-    // eprintln!("instance_dnf = {}", instance_dnf);
+    let instance_cnf = instance_dnf.to_cnf();
+    eprintln!("instance_cnf = {}", instance_cnf);
 
-    // let instance_dnf = instance_dnf.to_dnf();
-    // eprintln!("instance_dnf = {:#?}", instance_dnf);
+    let cnf_clauses = instance_cnf.extract_cnf_clauses();
+    for clause in &cnf_clauses {
+        eprintln!("clause = {}", clause);
+    }
 }
