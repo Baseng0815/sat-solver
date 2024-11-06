@@ -2,7 +2,7 @@ use std::{error::Error, fs, path::Path};
 
 use chumsky::{error::Simple, pratt::{infix, prefix, right}, primitive::{choice, just}, recursive::recursive, text::{self}, Parser};
 
-use crate::solver::Expression;
+use crate::solver::{Expression, SATInstance};
 
 // pub type ParseResult<T = ()> = Result<T, Simple<char>>;
 
@@ -23,28 +23,45 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Expression> {
 
         let op = |c| just(c).padded();
         atom.pratt((
-                prefix(10, op('-'), |expr| {
-                    // fold multiple nots into one
-                    if let Expression::Not(inner) = expr {
-                        *inner
-                    } else {
-                        Expression::Not(Box::new(expr))
-                    }
-                }),
+                prefix(10, op('-'), |expr| Expression::Not(Box::new(expr))),
                 infix(right(5), op('&'), |lhs, rhs| Expression::And(Box::new(lhs), Box::new(rhs))),
                 infix(right(2), op('|'), |lhs, rhs| Expression::Or(Box::new(lhs), Box::new(rhs))),
         ))
     })
 }
 
-pub fn parse_file(file: &Path) -> Result<Expression, Box<dyn Error>> {
-    let content = fs::read_to_string(file)?;
+fn extract_variables(expression: &Expression) -> Vec<String> {
+    match expression {
+        Expression::Variable(var) => vec![var.clone()],
+        Expression::Constant(_) => vec![],
+        Expression::And(lhs, rhs) => {
+            let mut variables_lhs = extract_variables(lhs);
+            let mut variables_rhs = extract_variables(rhs);
+            variables_lhs.append(&mut variables_rhs);
+            variables_lhs
+        },
+        Expression::Or(lhs, rhs) => {
+            let mut variables_lhs = extract_variables(lhs);
+            let mut variables_rhs = extract_variables(rhs);
+            variables_lhs.append(&mut variables_rhs);
+            variables_lhs
+        },
+        Expression::Not(expr) => {
+            let variables = extract_variables(expr);
+            variables
+        },
+    }
+}
+
+pub fn parse_file(file: &Path) -> SATInstance {
+    let content = fs::read_to_string(file).unwrap();
 
     let parser = parser();
-    match parser.parse(&content).into_result() {
-        Ok(expr) => Ok(expr),
-        Err(errors) => {
-            panic!("Encountered errors while parsing: {:#?}", errors);
-        }
+    let expression = parser.parse(&content).into_result().unwrap();
+    let variables = extract_variables(&expression);
+
+    SATInstance {
+        expression,
+        variables,
     }
 }
