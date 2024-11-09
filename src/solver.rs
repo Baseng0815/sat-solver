@@ -4,6 +4,15 @@ use chumsky::container::Container;
 use colored::{Color, Colorize};
 use rand::seq::SliceRandom;
 
+// cnf, dnf
+#[derive(Debug, Clone)]
+pub enum Literal {
+    Variable(String),
+    VariableNot(String),
+    Constant(bool),
+}
+
+// arbitrary expressions
 #[derive(Debug, Clone)]
 pub enum Expression {
     Variable(String), // we should intern strings and assign IDs instead but whatever
@@ -47,8 +56,15 @@ impl Display for Expression {
 }
 
 impl Expression {
-    pub fn solve(&self) -> Option<HashMap<String, bool>> {
-        None
+    pub fn solve_dpll(self) -> Option<HashMap<String, bool>> {
+        let cnf = self.to_cnf();
+        let clauses = cnf.extract_cnf_clauses();
+        let assignment = HashMap::new();
+
+        // unit propagation: delete clauses with single literal since we know its value
+        for clause in clauses {
+            if clause
+        }
     }
 
     pub fn evaluate(&self, assignment: &HashMap<String, bool>) -> bool {
@@ -75,7 +91,7 @@ impl Expression {
     }
 
     fn to_dnf_recursive(self, modified_prev: &mut bool) -> Expression {
-        // we apply the following rules until a fix point is found:
+        // we apply the following rules until a fixpoint is found:
         // 1. combine multiple not: --x => x
         // 2.1 DeMorgan: -(x | y) => -x & -x
         // 2.2 DeMorgan: -(x & y) => -x | -x
@@ -186,16 +202,15 @@ impl Expression {
         expression
     }
 
-    pub fn to_cnf(self) -> Expression {
+    pub fn to_cnf(self) -> Vec<Vec<Literal>> {
         // 1. negate and convert to dnf
         let negated_dnf = Expression::Not(Box::new(self)).to_dnf();
         eprintln!("negated_dnf = {}", negated_dnf);
 
         // 2. negate again and move not inwards using DeMorgan
-        Expression::Not(Box::new(negated_dnf)).recursive_demorgan()
-    }
+        let cnf = Expression::Not(Box::new(negated_dnf)).recursive_demorgan();
 
-    pub fn extract_cnf_clauses(self) -> Vec<Expression> {
+        // 3. extract clauses
         let mut clauses = Vec::new();
         let mut remaining = vec![self];
         while !remaining.is_empty() {
