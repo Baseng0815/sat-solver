@@ -1,17 +1,60 @@
-use std::{error::Error, fs, path::Path};
+use std::{collections::HashMap, error::Error, fs, path::Path};
 
-use chumsky::{error::Simple, pratt::{infix, prefix, right}, primitive::{choice, just}, recursive::recursive, text::{self}, Parser};
+use chumsky::{container::Seq, error::Simple, pratt::{infix, prefix, right}, primitive::{choice, just}, recursive::recursive, text, Parser};
 
-use crate::solver::{Expression, SATInstance};
+use crate::{expression::{Expression, VariableId}, expression::SATInstance};
 
 // pub type ParseResult<T = ()> = Result<T, Simple<char>>;
 
-fn parser<'a>() -> impl Parser<'a, &'a str, Expression> {
+// arbitrary expressions
+#[derive(Debug, Clone)]
+enum ParsedExpression {
+    Variable(String),
+    Constant(bool),
+    And(Box<ParsedExpression>, Box<ParsedExpression>),
+    Or(Box<ParsedExpression>, Box<ParsedExpression>),
+    Not(Box<ParsedExpression>),
+}
+
+impl ParsedExpression {
+    fn intern_to_expression(self, interned_variables: &mut HashMap<VariableId, String>) -> Expression {
+        match self {
+            ParsedExpression::Variable(var) => {
+                let id = match interned_variables.iter().find(|(_, s)| **s == var) {
+                    Some((id, _)) => *id,
+                    None => {
+                        let id = VariableId::try_from(interned_variables.len()).expect("Couldn't convert to variable id");
+                        interned_variables.insert(id, var);
+                        id
+                    },
+                };
+                Expression::Variable(id)
+            },
+            ParsedExpression::Constant(val) => Expression::Constant(val),
+            ParsedExpression::And(lhs, rhs) => {
+                let expr_lhs = lhs.intern_to_expression(interned_variables);
+                let expr_rhs = rhs.intern_to_expression(interned_variables);
+                Expression::And(Box::new(expr_lhs), Box::new(expr_rhs))
+            },
+            ParsedExpression::Or(lhs, rhs) => {
+                let expr_lhs = lhs.intern_to_expression(interned_variables);
+                let expr_rhs = rhs.intern_to_expression(interned_variables);
+                Expression::Or(Box::new(expr_lhs), Box::new(expr_rhs))
+            },
+            ParsedExpression::Not(expr) => {
+                let interned = expr.intern_to_expression(interned_variables);
+                Expression::Not(Box::new(interned))
+            },
+        }
+    }
+}
+
+fn parser<'a>() -> impl Parser<'a, &'a str, ParsedExpression> {
     recursive(|expr| {
-        let variable = text::ascii::ident().map(|s: &str| Expression::Variable(s.to_string()));
+        let variable = text::ascii::ident().map(|s: &str| ParsedExpression::Variable(s.to_string()));
         let constant = choice((
-                just('0').to(Expression::Constant(false)),
-                just('1').to(Expression::Constant(true)),
+                just('0').to(ParsedExpression::Constant(false)),
+                just('1').to(ParsedExpression::Constant(true)),
         ));
 
         let literal = choice((
@@ -23,45 +66,20 @@ fn parser<'a>() -> impl Parser<'a, &'a str, Expression> {
 
         let op = |c| just(c).padded();
         atom.pratt((
-                prefix(10, op('-'), |expr| Expression::Not(Box::new(expr))),
-                infix(right(5), op('&'), |lhs, rhs| Expression::And(Box::new(lhs), Box::new(rhs))),
-                infix(right(2), op('|'), |lhs, rhs| Expression::Or(Box::new(lhs), Box::new(rhs))),
+                prefix(10, op('-'), |expr| ParsedExpression::Not(Box::new(expr))),
+                infix(right(5), op('&'), |lhs, rhs| ParsedExpression::And(Box::new(lhs), Box::new(rhs))),
+                infix(right(2), op('|'), |lhs, rhs| ParsedExpression::Or(Box::new(lhs), Box::new(rhs))),
         ))
     })
-}
-
-fn extract_variables(expression: &Expression) -> Vec<String> {
-    match expression {
-        Expression::Variable(var) => vec![var.clone()],
-        Expression::Constant(_) => vec![],
-        Expression::And(lhs, rhs) => {
-            let mut variables_lhs = extract_variables(lhs);
-            let mut variables_rhs = extract_variables(rhs);
-            variables_lhs.append(&mut variables_rhs);
-            variables_lhs
-        },
-        Expression::Or(lhs, rhs) => {
-            let mut variables_lhs = extract_variables(lhs);
-            let mut variables_rhs = extract_variables(rhs);
-            variables_lhs.append(&mut variables_rhs);
-            variables_lhs
-        },
-        Expression::Not(expr) => {
-            let variables = extract_variables(expr);
-            variables
-        },
-    }
 }
 
 pub fn parse_file(file: &Path) -> SATInstance {
     let content = fs::read_to_string(file).unwrap();
 
     let parser = parser();
-    let expression = parser.parse(&content).into_result().unwrap();
-    let variables = extract_variables(&expression);
+    let parsed_expression = parser.parse(&content).into_result().unwrap();
 
-    SATInstance {
-        expression,
-        variables,
-    }
+    let mut interned_variables = HashMap::new();
+    let expression = parsed_expression.intern_to_expression(&mut interned_variables);
+    SATInstance::new(expression, interned_variables)
 }
