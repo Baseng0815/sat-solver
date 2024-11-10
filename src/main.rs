@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error, path::{Path, PathBuf}};
 
 use parser::parse_file;
 
-use crate::{expression::Assignment, solver::solve_dpll};
+use crate::{expression::Assignment, solver::{solve_dpll, SolverResult}};
 
 mod parser;
 mod solver;
@@ -15,4 +15,10 @@ fn main() {
 
     let solution = solve_dpll(&instance);
     eprintln!("solution = {:#?}", solution);
+
+    // if let SolverResult::Sat(solution) = solution {
+    //     if let Some(assignment) = solution {
+    //         eprintln!("instance.expression.evaluate(&assignment) = {:#?}", instance.expression.evaluate(&assignment));
+    //     }
+    // }
 }

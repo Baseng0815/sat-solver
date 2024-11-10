@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::{Debug, Display}};
+use std::{collections::{BTreeSet, HashMap, HashSet}, fmt::{Debug, Display}};
 
 use chumsky::container::Container;
 use colored::{Color, Colorize};
@@ -7,11 +7,41 @@ use rand::seq::SliceRandom;
 pub type VariableId = u16;
 
 // cnf, dnf
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Literal {
     Variable(VariableId),
     VariableNot(VariableId),
-    Constant(bool),
+}
+
+impl Literal {
+    pub fn new(id: VariableId, value: bool) -> Self {
+        if value == true {
+            Literal::Variable(id)
+        } else {
+            Literal::VariableNot(id)
+        }
+    }
+
+    pub fn id(&self) -> VariableId {
+        match self {
+            Literal::Variable(id) => *id,
+            Literal::VariableNot(id) => *id,
+        }
+    }
+
+    pub fn not(&self) -> Self {
+        match self {
+            Literal::Variable(id) => Literal::VariableNot(*id),
+            Literal::VariableNot(id) => Literal::Variable(*id),
+        }
+    }
+
+    pub fn value(&self) -> bool {
+        match self {
+            Literal::Variable(_) => true,
+            Literal::VariableNot(_) => false,
+        }
+    }
 }
 
 // arbitrary expressions
@@ -36,22 +66,22 @@ impl SATInstance {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Clause {
-    literals: Vec<Literal>,
+    pub literals: HashSet<Literal>,
 }
 
 impl Clause {
-    pub fn new(literals: Vec<Literal>) -> Self {
+    pub fn new(literals: HashSet<Literal>) -> Self {
         Self { literals }
     }
 
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Assignment {
-    values: HashMap<VariableId, bool>
+    pub values: HashMap<VariableId, bool>
 }
 
 impl Assignment {
@@ -68,12 +98,12 @@ impl<const N: usize> From<[(VariableId, bool); N]> for Assignment {
 
 #[derive(Debug)]
 pub struct DNF {
-    clauses: Vec<Clause>
+    pub clauses: Vec<Clause>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CNF {
-    clauses: Vec<Clause>
+    pub clauses: Vec<Clause>
 }
 
 impl DNF {
@@ -90,6 +120,7 @@ impl CNF {
 
 impl From<Expression> for DNF {
     fn from(value: Expression) -> Self {
+        // convert to dnf
         let dnf_expr = value.to_dnf_expr();
 
         // extract clauses
@@ -112,7 +143,7 @@ impl From<Expression> for DNF {
 impl From<Expression> for CNF {
     fn from(value: Expression) -> Self {
         let cnf_expr = value.to_cnf_expr();
-        eprintln!("cnf_expr = {}", cnf_expr);
+        eprintln!("CNF expression = {}", cnf_expr);
 
         // extract clauses
         let mut clauses = Vec::new();
@@ -173,6 +204,7 @@ impl Display for Expression {
 }
 
 impl Expression {
+    /// (Partially) evaluate `self` using the given [Assignment].
     pub fn evaluate(self, assignment: &Assignment) -> Expression {
         match self {
             Expression::Variable(var) => {
@@ -232,75 +264,54 @@ impl Expression {
         }
     }
 
-    fn to_dnf_recursive(self, modified_prev: &mut bool) -> Expression {
-        // we apply the following rules until a fixpoint is found:
-        // 1. combine multiple not: --x => x
-        // 2.1 DeMorgan: -(x | y) => -x & -x
-        // 2.2 DeMorgan: -(x & y) => -x | -x
-        // 3.1 distribute: x & (y | z) => x & y | x & z
-        // 3.2 distribute: (x | y) & z => x & z | y & z
-
-        let mut expression = self;
-        let mut modified = true;
-
-        while modified {
-            modified = false;
-
-            expression = match expression {
-                Expression::And(lhs, rhs) => {
-                    if let Expression::Or(inner_lhs, inner_rhs) = *rhs {
-                        // (lhs & (inner_lhs | inner_rhs) => (lhs & inner_lhs) | (lhs & inner_rhs))
-                        modified = true;
-                        Expression::Or(
-                            Box::new(Expression::And(Box::new(lhs.clone().to_dnf_recursive(&mut modified)), Box::new(inner_lhs.to_dnf_recursive(modified_prev)))),
-                            Box::new(Expression::And(Box::new(lhs.to_dnf_recursive(&mut modified)), Box::new(inner_rhs.to_dnf_recursive(modified_prev)))),
-                        )
-                    } else if let Expression::Or(inner_lhs, inner_rhs) = *lhs {
-                        // ((inner_lhs | inner_rhs) & rhs) => (inner_lhs & rhs) | (inner_rhs & rhs)
-                        modified = true;
-                        Expression::Or(
-                            Box::new(Expression::And(Box::new(inner_lhs.to_dnf_recursive(&mut modified)), Box::new(rhs.clone().to_dnf_recursive(modified_prev)))),
-                            Box::new(Expression::And(Box::new(inner_rhs.to_dnf_recursive(&mut modified)), Box::new(rhs.to_dnf_recursive(modified_prev)))),
-                        )
-                    } else {
-                        Expression::And(Box::new(lhs.to_dnf_recursive(&mut modified)), Box::new(rhs.to_dnf_recursive(modified_prev)))
-                    }
-                },
-                Expression::Or(lhs, rhs) => Expression::Or(Box::new(lhs.to_dnf_recursive(&mut modified)), Box::new(rhs.to_dnf_recursive(modified_prev))),
-                Expression::Not(expr) => match *expr {
-                    Expression::And(lhs, rhs) => {
-                        // -(lhs & rhs) => -lhs | -rhs
-                        let inner_lhs = Expression::Not(Box::new(lhs.to_dnf_recursive(&mut modified)));
-                        let inner_rhs = Expression::Not(Box::new(rhs.to_dnf_recursive(&mut modified)));
-                        modified = true;
-                        Expression::Or(Box::new(inner_lhs), Box::new(inner_rhs))
-                    }
-                    Expression::Or(lhs, rhs) => {
-                        // -(lhs | rhs) => -lhs & -rhs
-                        let inner_lhs = Expression::Not(Box::new(lhs.to_dnf_recursive(&mut modified)));
-                        let inner_rhs = Expression::Not(Box::new(rhs.to_dnf_recursive(&mut modified)));
-                        modified = true;
-                        Expression::And(Box::new(inner_lhs), Box::new(inner_rhs))
-                    }
-                    Expression::Not(inner_expr) => inner_expr.to_dnf_recursive(&mut modified),
-                    _ => Expression::Not(expr),
-                },
-                _ => expression,
-            };
-
-            if modified {
-                *modified_prev = true;
-            }
+    /// Distribute 'And' expressions over 'Or' expressions
+    ///
+    /// # Example
+    ///
+    /// `(v0 | v1) & v2 => (v0 & v2) | (v1 & v2)`
+    fn distribute_and_over_or(self) -> Expression {
+        match self {
+            Expression::And(lhs, rhs) => {
+                if let Expression::Or(inner_lhs, inner_rhs) = *rhs {
+                    // (lhs & (inner_lhs | inner_rhs) => (lhs & inner_lhs) | (lhs & inner_rhs))
+                    Expression::Or(
+                        Box::new(Expression::And(lhs.clone(), inner_lhs.clone())),
+                        Box::new(Expression::And(lhs.clone(), inner_rhs.clone())),
+                    ).distribute_and_over_or()
+                } else if let Expression::Or(inner_lhs, inner_rhs) = *lhs {
+                    // ((inner_lhs | inner_rhs) & rhs) => (inner_lhs & rhs) | (inner_rhs & rhs)
+                    Expression::Or(
+                        Box::new(Expression::And(inner_lhs.clone(), rhs.clone())),
+                        Box::new(Expression::And(inner_rhs.clone(), rhs.clone())),
+                    ).distribute_and_over_or()
+                } else {
+                    Expression::And(Box::new(lhs.distribute_and_over_or()), Box::new(rhs.distribute_and_over_or()))
+                }
+            },
+            Expression::Or(lhs, rhs) => Expression::Or(Box::new(lhs.distribute_and_over_or()), Box::new(rhs.distribute_and_over_or())),
+            Expression::Not(expr) => Expression::Not(Box::new(expr.distribute_and_over_or())),
+            _ => self,
         }
-
-        expression
     }
 
+    /// Convert `self` into an expression in disjunctive normal form, i.e. a disjunction of
+    /// conjunctions.
+    ///
+    /// # Example
+    ///
+    /// (v0 | v1) & v2 => (v0 & v2) | (v1 | v2)
     fn to_dnf_expr(self) -> Expression {
-        let mut modified = false;
-        self.to_dnf_recursive(&mut modified)
+        let reduced = self.evaluate(&Assignment::default());
+        let nnf = reduced.recursive_demorgan();
+        let distributed = nnf.distribute_and_over_or();
+        distributed
     }
 
+    /// Move 'Not' expressions inside
+    ///
+    /// # Example
+    ///
+    /// `-((v0 | v1) & -v2) => (-v0 & -v1) | v2`
     fn recursive_demorgan(self) -> Expression {
         let mut expression = self;
         let mut modified = true;
@@ -344,31 +355,38 @@ impl Expression {
         expression
     }
 
+    /// Convert `self` into an expression in conjunctive normal form, i.e. a conjunction of
+    /// disjunctions.
+    ///
+    /// # Example
+    ///
+    /// (v0 & v1) | v2 => (v0 | v2) & (v1 | v2)
     fn to_cnf_expr(self) -> Expression {
         // 1. negate and convert to dnf
         let negated_dnf = Expression::Not(Box::new(self)).to_dnf_expr();
+        eprintln!("-DNF expression = {}", negated_dnf);
 
-        // 2. negate again and move not inwards using DeMorgan
+        // 2. negate again and move 'not' inwards using DeMorgan
         Expression::Not(Box::new(negated_dnf)).recursive_demorgan()
     }
 
-    fn collect_literals(&self) -> Vec<Literal> {
+    fn collect_literals(&self) -> HashSet<Literal> {
         match self {
-            Expression::Variable(var) => vec![Literal::Variable(var.clone())],
-            Expression::Constant(val) => vec![Literal::Constant(*val)],
+            Expression::Variable(var) => HashSet::from([Literal::Variable(var.clone())]),
+            Expression::Constant(_) => HashSet::from([]),
             Expression::And(lhs, rhs) => {
                 let mut literals_lhs = lhs.collect_literals();
-                literals_lhs.append(&mut rhs.collect_literals());
+                literals_lhs.extend(rhs.collect_literals());
                 literals_lhs
             },
             Expression::Or(lhs, rhs) => {
                 let mut literals_lhs = lhs.collect_literals();
-                literals_lhs.append(&mut rhs.collect_literals());
+                literals_lhs.extend(rhs.collect_literals());
                 literals_lhs
             },
             Expression::Not(expr) => {
                 match expr.as_ref() {
-                    Expression::Variable(var) => vec![Literal::VariableNot(var.clone())],
+                    Expression::Variable(var) => HashSet::from([Literal::VariableNot(var.clone())]),
                     _ => expr.collect_literals()
                 }
             },
