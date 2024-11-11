@@ -1,6 +1,6 @@
 use std::{collections::{BTreeSet, HashMap, HashSet}, fmt::{Debug, Display}};
 
-use chumsky::container::Container;
+use chumsky::container::{Container, Seq};
 use colored::{Color, Colorize};
 use rand::seq::SliceRandom;
 
@@ -66,7 +66,7 @@ impl SATInstance {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Clause {
     pub literals: HashSet<Literal>,
 }
@@ -79,7 +79,7 @@ impl Clause {
 
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Assignment {
     pub values: HashMap<VariableId, bool>
 }
@@ -101,7 +101,7 @@ pub struct DNF {
     pub clauses: Vec<Clause>
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CNF {
     pub clauses: Vec<Clause>
 }
@@ -115,6 +115,16 @@ impl DNF {
 impl CNF {
     pub fn new(clauses: Vec<Clause>) -> Self {
         Self { clauses }
+    }
+
+    pub fn reduce(&mut self, literal: Literal) {
+        // remove clauses with literal
+        self.clauses.retain(|clause| !clause.literals.contains(&literal));
+
+        // remove negated literal in remaining clauses
+        for clause in self.clauses.iter_mut() {
+            clause.literals.remove(&literal.not());
+        }
     }
 }
 
@@ -164,7 +174,7 @@ impl From<Expression> for CNF {
 
 impl Display for SATInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Instance containing {} variables", self.interned_variables.len());
+        writeln!(f, "Instance containing {} variables", self.interned_variables.len())?;
 
         write!(f, "Expression: {}", self.expression)
     }

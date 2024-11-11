@@ -10,7 +10,7 @@ pub enum SolverResult {
     Unsat
 }
 
-fn remove_unit_clauses(cnf: &mut CNF, assignment: &mut Assignment) -> SolverResult {
+fn remove_unit_clauses(cnf: &mut CNF, assignment: &mut Assignment) {
     let mut keep_going = true;
 
     while keep_going {
@@ -35,16 +35,9 @@ fn remove_unit_clauses(cnf: &mut CNF, assignment: &mut Assignment) -> SolverResu
             // remove negative occurence in all remaining clauses
             for clause in cnf.clauses.iter_mut() {
                 clause.literals.remove(&literal.not());
-
-                // empty clause arises => unsat
-                if clause.literals.is_empty() {
-                    return SolverResult::Unsat;
-                }
             }
         }
     }
-
-    SolverResult::Sat(None)
 }
 
 fn eliminate_pure_literals(cnf: &mut CNF, assignment: &mut Assignment) {
@@ -75,19 +68,62 @@ fn eliminate_pure_literals(cnf: &mut CNF, assignment: &mut Assignment) {
     cnf.clauses.retain(|clause| clause.literals.intersection(&pure_literals).count() == 0);
 }
 
-pub fn solve_dpll(instance: &SATInstance) -> SolverResult {
-    let mut cnf = CNF::from(instance.expression.clone());
-    let mut assignment = Assignment::default();
-    eprintln!("CNF = {:#?}", cnf);
-
-    while !cnf.clauses.is_empty() {
-        if let SolverResult::Unsat = remove_unit_clauses(&mut cnf, &mut assignment) {
-            return SolverResult::Unsat;
+fn choose_variable(cnf: &CNF, max_id: VariableId, assignment: &Assignment) -> Option<VariableId> {
+    for id in 0..=max_id {
+        let variable_id = VariableId::try_from(id).expect("Couldn't convert to variable id");
+        if !assignment.values.contains_key(&variable_id) {
+            return Some(variable_id);
         }
-
-        eliminate_pure_literals(&mut cnf, &mut assignment);
     }
 
-    SolverResult::Sat(Some(assignment))
+    None
+}
+
+pub fn solve_dpll(instance: &SATInstance) -> SolverResult {
+    let max_id = VariableId::try_from(instance.interned_variables.len() - 1).expect("Couldn't convert to variable id");
+
+    let mut stack = vec![(CNF::from(instance.expression.clone()), Assignment::default())];
+
+    eprintln!("CNF = {:#?}", stack[0].0);
+
+    loop {
+        let (mut cnf, mut assignment) = stack.pop().expect("There must be something left at this point");
+
+        // try to find solution by repeatedly applying simple steps
+        remove_unit_clauses(&mut cnf, &mut assignment);
+        eliminate_pure_literals(&mut cnf, &mut assignment);
+
+        // no clauses left => solution found
+        if cnf.clauses.is_empty() {
+            return SolverResult::Sat(Some(assignment));
+        }
+
+        // empty clause left => unsat
+        for clause in &cnf.clauses {
+            if clause.literals.is_empty() {
+                return SolverResult::Unsat;
+            }
+        }
+
+        // now we need to guess
+        let var_id = match choose_variable(&cnf, max_id, &assignment) {
+            Some(var_id) => var_id,
+            None => return SolverResult::Unsat // nothing left => unsat
+        };
+
+        // TODO use better data structure to prevent cloning (only track differences)
+        let mut assignment_true = assignment.clone();
+        let mut assignment_false = assignment.clone();
+        assignment_true.values.insert(var_id, true);
+        assignment_false.values.insert(var_id, false);
+
+        let mut cnf_true = cnf.clone();
+        let mut cnf_false = cnf.clone();
+        cnf_true.reduce(Literal::new(var_id, true));
+        cnf_false.reduce(Literal::new(var_id, false));
+
+        stack.push((cnf_true, assignment_true));
+        stack.push((cnf_false, assignment_false));
+    }
 }
 
