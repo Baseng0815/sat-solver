@@ -2,13 +2,13 @@ use std::{collections::HashMap, error::Error, fs, path::Path};
 
 use chumsky::{container::Seq, error::Simple, pratt::{infix, prefix, right}, primitive::{choice, just}, recursive::recursive, text, Parser};
 
-use crate::{expression::{Expression, VariableId}, expression::SATInstance};
+use crate::{expression::expression::{Expression, VariableId}, solver::instance::SATInstance};
 
 // pub type ParseResult<T = ()> = Result<T, Simple<char>>;
 
 // arbitrary expressions
 #[derive(Debug, Clone)]
-enum ParsedExpression {
+pub enum ParsedExpression {
     Variable(String),
     Constant(bool),
     And(Box<ParsedExpression>, Box<ParsedExpression>),
@@ -46,6 +46,14 @@ impl ParsedExpression {
                 Expression::Not(Box::new(interned))
             },
         }
+    }
+}
+
+impl From<ParsedExpression> for SATInstance {
+    fn from(value: ParsedExpression) -> Self {
+        let mut interned_variables = HashMap::new();
+        let interned_expression = value.intern_to_expression(&mut interned_variables);
+        Self::new(interned_expression, interned_variables)
     }
 }
 
