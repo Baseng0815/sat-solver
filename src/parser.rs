@@ -6,6 +6,31 @@ use crate::{expression::expression::{Expression, VariableId}, solver::instance::
 
 // pub type ParseResult<T = ()> = Result<T, Simple<char>>;
 
+#[macro_export]
+macro_rules! prop_expr {
+    ( true ) => {
+        ParsedExpression::Constant(true)
+    };
+    ( false ) => {
+        ParsedExpression::Constant(false)
+    };
+    ( $lhs:ident ) => {
+        ParsedExpression::Variable(String::from(stringify!($lhs)))
+    };
+    ( -$lhs:tt ) => {
+        ParsedExpression::Not(Box::new(prop_expr!($lhs)))
+    };
+    ( ($($lhs:tt)* ) ) => {
+        prop_expr!($($lhs)*)
+    };
+    ( $lhs:tt | $rhs:tt ) => {
+        ParsedExpression::Or(Box::new(prop_expr!($lhs)), Box::new(prop_expr!($rhs)))
+    };
+    ( $lhs:tt & $rhs:tt ) => {
+        ParsedExpression::And(Box::new(prop_expr!($lhs)), Box::new(prop_expr!($rhs)))
+    };
+}
+
 // arbitrary expressions
 #[derive(Debug, Clone)]
 pub enum ParsedExpression {
